@@ -112,6 +112,8 @@ Drivers/BSP/Components/lsm6dsv320x/lsm6dsv320x_reg.h
 ### FSM 初始化（来自 app_mems.c）
 
 ```c
+/* 注意：这里使用的是 BSP 层封装函数 LSM6DSV320X_Write_Reg()。
+ * 如果你使用 PID 驱动，等价调用为 lsm6dsv320x_write_reg()。 */
 void FSM_Init(void)
 {
     int i;

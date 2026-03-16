@@ -354,7 +354,7 @@ void drop_detect_process(void)
             lsm6dsv320x_timestamp_raw_get(&dev_ctx, &ts_now);
             float elapsed_ms = (float)(ts_now - ts_freefall_start)
                                * LSM6DSV320X_TIMESTAMP_LSB_US / 1000.0f;
-            if (elapsed_ms > (float)FREEFALL_TIMEOUT_MS) {
+            if (elapsed_ms > FREEFALL_TIMEOUT_MS) {
                 drop_state = STATE_IDLE;
             }
         }
