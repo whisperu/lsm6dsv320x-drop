@@ -9,13 +9,28 @@
 
 ## 1. 最值得参考的仓库
 
-### STMicroelectronics/X-CUBE-MEMS1
+### 1.1 STMicroelectronics/lsm6dsv320x-pid
 
-| 类型 | 链接 |
+| 类型 | 说明 |
 |------|------|
-| 仓库主页 | https://github.com/STMicroelectronics/X-CUBE-MEMS1 |
+| 仓库地址 | https://github.com/STMicroelectronics/lsm6dsv320x-pid |
+| 用途 | **纯寄存器层驱动**（平台无关，Standard C，符合 MISRA C） |
+| 核心文件 | `lsm6dsv320x_reg.c` / `lsm6dsv320x_reg.h` |
 
-这是 ST 官方的 MEMS 传感器软件扩展包，包含：
+**为什么重要**：
+- 这是 ST 官方提供的**平台无关驱动**（PID = Platform Independent Driver）。
+- 所有函数签名和结构体定义以此仓库为准。
+- 不依赖 STM32 HAL，可移植到任何平台（ESP32、NRF、Linux 等）。
+- 只需要你实现 `write_reg` / `read_reg` / `mdelay` 三个回调即可。
+
+### 1.2 STMicroelectronics/X-CUBE-MEMS1
+
+| 类型 | 说明 |
+|------|------|
+| 仓库地址 | https://github.com/STMicroelectronics/X-CUBE-MEMS1 |
+| 用途 | ST 官方 MEMS 传感器软件扩展包（含完整工程和 BSP） |
+
+**包含内容**：
 - LSM6DSV320X 完整 BSP 驱动
 - 针对多个 NUCLEO 开发板的应用示例
 - FSM / MLC 配置示例
@@ -33,7 +48,7 @@
 - FSM 输出读取
 - 中断驱动事件处理
 
-以下是各开发板对应的工程路径：
+以下是各开发板对应的工程路径（在 X-CUBE-MEMS1 仓库中）：
 
 | 开发板 | 路径 |
 |--------|------|
@@ -50,7 +65,7 @@
 
 ### 3.1 FSM 配置文件
 
-路径：
+路径（以 F401RE 为例）：
 ```
 Projects/NUCLEO-F401RE/Applications/CUSTOM/HighGLowGFusion_LSM6DSV320X/Inc/highglowg_fsm.h
 ```
@@ -74,7 +89,7 @@ Projects/NUCLEO-F401RE/Applications/CUSTOM/HighGLowGFusion_LSM6DSV320X/Src/app_m
 - 包含 `Enable_HighG()` —— 启用高 g 加速度通道
 - 是整个应用的核心入口，建议重点阅读
 
-### 3.3 BSP 驱动文件
+### 3.3 BSP 驱动文件（X-CUBE-MEMS1 中的版本）
 
 路径：
 ```
@@ -92,21 +107,13 @@ Drivers/BSP/Components/lsm6dsv320x/lsm6dsv320x_reg.h
 
 ---
 
-## 4. ST 官方相关驱动仓库
-
-| 仓库 | 说明 |
-|------|------|
-| https://github.com/STMicroelectronics/lsm6dsv320x-pid | 纯寄存器层驱动（独立版本，不依赖 STM32 HAL）|
-
-> **说明**：`lsm6dsv320x-pid` 仓库包含可移植的寄存器层驱动，适合移植到非 STM32 平台。如果你的硬件平台不是 STM32，建议从这里取驱动，再自己实现 I2C/SPI 读写接口。
-
----
-
-## 5. 参考代码片段示例
+## 4. 参考代码片段示例
 
 ### FSM 初始化（来自 app_mems.c）
 
 ```c
+/* 注意：这里使用的是 BSP 层封装函数 LSM6DSV320X_Write_Reg()。
+ * 如果你使用 PID 驱动，等价调用为 lsm6dsv320x_write_reg()。 */
 void FSM_Init(void)
 {
     int i;
@@ -117,23 +124,22 @@ void FSM_Init(void)
 }
 ```
 
-### FSM 输出读取（来自 app_mems.c）
+### 启用高 g 通道（来自 app_mems.c）
 
 ```c
-void FSM_Handler(void)
+void Enable_HighG(void)
 {
-    uint8_t fsm_out1, fsm_out2;
-    /* 切换到 embedded function 内存区域 */
-    LSM6DSV320X_Write_Reg(dev, LSM6DSV320X_FUNC_CFG_ACCESS,
-                          LSM6DSV320X_EMBED_FUNC_MEM_BANK << 7);
-    /* 读取 FSM 输出寄存器 */
-    LSM6DSV320X_Read_Reg(dev, LSM6DSV320X_FSM_OUTS1, &fsm_out1);
-    LSM6DSV320X_Read_Reg(dev, LSM6DSV320X_FSM_OUTS2, &fsm_out2);
-    /* 切回主内存区域 */
-    LSM6DSV320X_Write_Reg(dev, LSM6DSV320X_FUNC_CFG_ACCESS,
-                          LSM6DSV320X_MAIN_MEM_BANK << 7);
+    (void)LSM6DSV320X_ACC_HG_Enable(MotionCompObj[CUSTOM_LSM6DSV320X_0]);
+    (void)LSM6DSV320X_ACC_HG_SetOutputDataRate(MotionCompObj[CUSTOM_LSM6DSV320X_0], HighGODR);
+    HighGEnable = 1;
 }
 ```
+
+> 如果你不使用 BSP 层，等价的 PID 驱动调用为：
+> ```c
+> lsm6dsv320x_hg_xl_data_rate_set(&dev_ctx, LSM6DSV320X_HG_XL_ODR_AT_480Hz);
+> lsm6dsv320x_hg_xl_full_scale_set(&dev_ctx, LSM6DSV320X_320g);
+> ```
 
 ### 单位换算（来自 lsm6dsv320x_reg.c）
 
@@ -147,18 +153,18 @@ float mg = lsm6dsv320x_from_fs320_to_mg(raw_value);
 
 ---
 
-## 6. 推荐阅读顺序
+## 5. 推荐阅读顺序
 
 如果你是第一次接触这个芯片，建议按照以下顺序阅读参考资料：
 
-1. **先看 `lsm6dsv320x.h`** —— 了解有哪些 BSP 级别的函数
+1. **先看 `lsm6dsv320x_reg.h`（lsm6dsv320x-pid 仓库）** —— 了解所有函数签名和结构体定义
 2. **再看 `app_mems.c` 里的 `FSM_Init` 和 `Enable_HighG`** —— 了解初始化流程
 3. **再看 `highglowg_fsm.h`** —— 了解 FSM 配置内容
 4. **最后看 `lsm6dsv320x_reg.c` 里的量程换算函数** —— 了解单位换算方法
 
 ---
 
-## 7. 搜索建议
+## 6. 搜索建议
 
 在 GitHub 上继续搜索时，推荐的关键词组合：
 
@@ -167,3 +173,4 @@ float mg = lsm6dsv320x_from_fs320_to_mg(raw_value);
 - `LSM6DSV320X FSM drop`
 - `lsm6dsv320x_ff_thresholds_set`
 - `lsm6dsv320x_hg_event_get`
+- `lsm6dsv320x_all_sources_get`

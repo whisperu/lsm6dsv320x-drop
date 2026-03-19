@@ -41,7 +41,7 @@
 
 芯片可以硬件判断合加速度低于阈值并持续一定时间，然后触发中断。
 
-关键配置：
+关键配置（使用 ST 官方 PID 驱动的正确 API）：
 ```c
 /* 设置自由落体阈值（合加速度低于此值触发） */
 lsm6dsv320x_ff_thresholds_set(&dev_ctx, LSM6DSV320X_156_mg);
@@ -51,11 +51,21 @@ lsm6dsv320x_ff_time_windows_set(&dev_ctx, 4);  /* 单位：ODR 周期数 */
 
 /* 将 free-fall 事件路由到 INT1 中断引脚 */
 lsm6dsv320x_pin_int1_route_t int1_route = {0};
-int1_route.free_fall = 1;
+int1_route.freefall = 1;  /* 注意：字段名是 freefall，不是 free_fall */
 lsm6dsv320x_pin_int1_route_set(&dev_ctx, &int1_route);
 ```
 
-**方式二：软件轮询合加速度**
+**方式二：使用 `lsm6dsv320x_all_sources_get()` 轮询（推荐调试阶段）**
+
+```c
+lsm6dsv320x_all_sources_t sources;
+lsm6dsv320x_all_sources_get(&dev_ctx, &sources);
+if (sources.free_fall) {
+    /* 注意：all_sources_t 里的字段名是 free_fall（有下划线） */
+}
+```
+
+**方式三：软件轮询合加速度**
 
 如果暂时不想配中断，也可以在主循环里自己计算：
 ```c
@@ -70,18 +80,25 @@ if (magnitude < 300.0f) {
 
 撞击时加速度瞬间超过阈值，LSM6DSV320X 的高 g 通道可以捕获此事件。
 
-关键配置：
+关键配置（注意正确的结构体字段名）：
 ```c
-/* 配置高 g 唤醒阈值（例如 4g） */
+/* 配置高 g 唤醒阈值 */
 lsm6dsv320x_hg_wake_up_cfg_t hg_cfg = {0};
-hg_cfg.wake_ths = 0x10;  /* 阈值寄存器值，参考数据手册换算 */
-lsm6dsv320x_hg_wake_up_cfg_set(&dev_ctx, &hg_cfg);
+hg_cfg.hg_wakeup_ths = 0x20;  /* 阈值寄存器值，8 位，参考数据手册换算 */
+hg_cfg.hg_shock_dur  = 0x01;  /* 冲击持续时间，4 位 */
+lsm6dsv320x_hg_wake_up_cfg_set(&dev_ctx, hg_cfg);
+
+/* 启用高 g 中断 */
+lsm6dsv320x_hg_wu_interrupt_cfg_t hg_int_cfg = {0};
+hg_int_cfg.hg_interrupts_enable = 1;
+lsm6dsv320x_hg_wu_interrupt_cfg_set(&dev_ctx, hg_int_cfg);
 
 /* 读取高 g 事件状态 */
-lsm6dsv320x_hg_wu_event_t hg_event;
+lsm6dsv320x_hg_event_t hg_event;
 lsm6dsv320x_hg_event_get(&dev_ctx, &hg_event);
-if (hg_event.wake_up) {
+if (hg_event.hg_wakeup) {  /* 注意：字段名是 hg_wakeup，不是 wake_up */
     /* 检测到撞击 */
+    /* hg_event.hg_wakeup_x / y / z 可以看哪个轴触发 */
 }
 ```
 
@@ -114,7 +131,6 @@ h ≈ (1/2) × g × t²
 
 ```c
 uint32_t ts_raw_t0, ts_raw_t1;
-float t0_sec, t1_sec;
 
 /* 进入自由落体时 */
 lsm6dsv320x_timestamp_raw_get(&dev_ctx, &ts_raw_t0);
@@ -123,12 +139,14 @@ lsm6dsv320x_timestamp_raw_get(&dev_ctx, &ts_raw_t0);
 lsm6dsv320x_timestamp_raw_get(&dev_ctx, &ts_raw_t1);
 
 /* 换算为秒（芯片时间戳分辨率为 25 μs/LSB） */
-t0_sec = ts_raw_t0 * 25e-6f;
-t1_sec = ts_raw_t1 * 25e-6f;
+float t0_sec = (float)ts_raw_t0 * 25e-6f;
+float t1_sec = (float)ts_raw_t1 * 25e-6f;
 
 float fall_duration = t1_sec - t0_sec;
 float estimated_height = 0.5f * 9.8f * fall_duration * fall_duration;
 ```
+
+> 也可以用官方换算函数 `lsm6dsv320x_from_lsb_to_nsec()` 获得纳秒值再转换。
 
 ### 3.3 为什么这只是近似值
 
@@ -150,16 +168,16 @@ float estimated_height = 0.5f * 9.8f * fall_duration * fall_duration;
 
 ### 4.1 撞击方向（impact direction）
 
-在撞击发生的时间窗口内，读取三轴峰值，找出绝对值最大的轴：
+在撞击发生的时间窗口内，读取高 g 三轴峰值，找出绝对值最大的轴：
 
 ```c
-/* 读取撞击瞬间三轴原始值 */
-int16_t raw[3];
-lsm6dsv320x_hg_acceleration_raw_get(&dev_ctx, raw);
+/* 读取撞击瞬间三轴原始值（使用高 g 通道） */
+int16_t hg_raw[3];
+lsm6dsv320x_hg_acceleration_raw_get(&dev_ctx, hg_raw);
 
-float ax = lsm6dsv320x_from_fs320_to_mg(raw[0]);
-float ay = lsm6dsv320x_from_fs320_to_mg(raw[1]);
-float az = lsm6dsv320x_from_fs320_to_mg(raw[2]);
+float ax = lsm6dsv320x_from_fs320_to_mg(hg_raw[0]);
+float ay = lsm6dsv320x_from_fs320_to_mg(hg_raw[1]);
+float az = lsm6dsv320x_from_fs320_to_mg(hg_raw[2]);
 
 /* 找出主撞击方向 */
 float abs_ax = fabsf(ax);
@@ -175,9 +193,11 @@ if (abs_ax >= abs_ay && abs_ax >= abs_az) {
 }
 ```
 
+> 也可以结合 `hg_event.hg_wakeup_x / y / z` 判断哪个轴触发了唤醒。
+
 ### 4.2 最终静止朝向（rest orientation）
 
-撞击后等待静止，读取三轴平均加速度，判断哪个轴朝上（受重力分量最大）：
+撞击后等待静止，读取低 g 三轴平均加速度，判断哪个轴朝上（受重力分量最大）：
 
 ```c
 /* 撞击后等待约 100 ms，读取低 g 三轴 */
@@ -188,13 +208,15 @@ float ax = lsm6dsv320x_from_fs4_to_mg(raw[0]);
 float ay = lsm6dsv320x_from_fs4_to_mg(raw[1]);
 float az = lsm6dsv320x_from_fs4_to_mg(raw[2]);
 
-/* 判断哪轴受重力 */
-if (az > 800.0f)       /* az ≈ +1000 mg */  → Z 轴朝上
-if (az < -800.0f)      /* az ≈ -1000 mg */  → Z 轴朝下
-if (ax > 800.0f)       /* ax ≈ +1000 mg */  → X 轴朝上
-if (ax < -800.0f)      /* ax ≈ -1000 mg */  → X 轴朝下
-if (ay > 800.0f)       /* ay ≈ +1000 mg */  → Y 轴朝上
-if (ay < -800.0f)      /* ay ≈ -1000 mg */  → Y 轴朝下
+/* 判断哪轴受重力（接近 ±1000 mg 的轴为竖直方向） */
+float abs_x = fabsf(ax), abs_y = fabsf(ay), abs_z = fabsf(az);
+if (abs_z >= abs_y && abs_z >= abs_x) {
+    /* Z 轴竖直，az > 0 为 Z 朝上，az < 0 为 Z 朝下 */
+} else if (abs_x >= abs_y && abs_x >= abs_z) {
+    /* X 轴竖直 */
+} else {
+    /* Y 轴竖直 */
+}
 ```
 
 > **注意**：`撞击方向` 和 `最终朝向` 是两个不同的概念，建议分开输出。
@@ -233,8 +255,8 @@ if (ay < -800.0f)      /* ay ≈ -1000 mg */  → Y 轴朝下
 
 ## 6. 初学者建议步骤
 
-1. 先完成芯片初始化，能读出加速度。
-2. 验证合加速度在静止时约等于 1000 mg。
+1. 先完成芯片初始化，验证 `WHO_AM_I`（应返回 `0x73`）。
+2. 能读出加速度，验证合加速度在静止时约等于 1000 mg。
 3. 手动摇晃传感器，观察三轴数据变化。
 4. 配置 free-fall 检测，测试中断是否能触发。
 5. 配置 high-g 检测，测试冲击事件是否触发。
